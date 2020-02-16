@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
 
+import argparse
 import couchdb2
 import datetime
 import json
 import os
-
-server = couchdb2.Server(href='https://localhost:6984/', username='admin', password='sekret', use_session=True)
-quiver = '/Users/YOU/Documents/Quiver.qvlibrary'
-
-# make things for which we don't have a timestamp "created" 3y ago and updated today
-now_ts     = datetime.datetime.now().timestamp()
-default_ts = now_ts - 94608000
-
-db = couchdb2.Database(server, 'inkdrop', check=True)
+import sys
 
 def get_couch_tags(db):
     tags = []
@@ -81,56 +74,90 @@ def notebook_update(db, cbooks, d2):
 
     return nb
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--server', dest='server', default='https://localhost:6984/',
+                        help='CouchDB2 server, default: https://localhost:6984/')
+    parser.add_argument('-u', '--user', dest='user',
+                        help='CouchDB2 user')
+    parser.add_argument('-p', '--password', dest='password',
+                        help='CouchDB2 password')
+    parser.add_argument('-q', '--quiver', dest='quiver',
+                        help='Path to Quiver library')
+    parser.add_argument('-d', '--database', dest='database', default='inkdrop',
+                        help='CouchDB2 database to use, default: inkdrop')
 
-# read data from Quiver
-tags   = []
-ctags  = get_couch_tags(db)
-cbooks = get_couch_books(db)
+    args = parser.parse_args()
 
-with open(quiver + '/meta.json') as quiver_file:
-    d1 = json.load(quiver_file)
-    print(d1['children'])
-    for qv in d1['children']:
-        child = '%s/%s.qvnotebook' % (quiver, qv['uuid'])
+    if not args.quiver:
+        print('Need a Quiver library to import from!')
+        sys.exit(1)
 
-        if os.path.isdir(child):
-            if os.path.isfile(child + '/meta.json'):
-                with open(child + '/meta.json') as child_file:
-                    d2 = json.load(child_file)
-                    nb = notebook_update(db, cbooks, d2)
+    if not os.path.isdir(args.quiver):
+        print('%s is not a directory to import from!' % args.quiver)
+        sys.exit(1)
 
-                    note_dirs = os.listdir(child)
-                    for n in note_dirs:
-                        if 'qvnote' in n:
-                            note = {}
-                            ndir = '%s/%s' % (child, n)
-                            body = ''
+    if args.user:
+        server = couchdb2.Server(href=args.server, username=args.user, password=args.password, use_session=True)
+    else:
+        server = couchdb2.Server(href=args.server, use_session=True)
 
-                            with open(ndir + '/meta.json') as note_meta_file:
-                                nmf = json.load(note_meta_file)
-                            with open(ndir + '/content.json') as note_content_file:
-                                ncf = json.load(note_content_file)
+    # make things for which we don't have a timestamp "created" 3y ago and updated today
+    now_ts     = datetime.datetime.now().timestamp()
+    default_ts = now_ts - 94608000
 
-                            for x in ncf['cells']:
-                                body = '%s%s\n\n' % (body, x['data'])
+    db = couchdb2.Database(server, args.database, check=True)
 
-                            (ctags, these_tags) = tag_update(db, ctags, nmf['tags'])
+    # read data from Quiver
+    tags   = []
+    ctags  = get_couch_tags(db)
+    cbooks = get_couch_books(db)
 
-                            # need to convert python timestamps (Quiver) to javascript timestamps (Inkdrop)
-                            u_at = nmf['updated_at'] * 1000
-                            c_at = nmf['created_at'] * 1000
+    with open(args.quiver + '/meta.json') as quiver_file:
+        d1 = json.load(quiver_file)
+        print(d1['children'])
+        for qv in d1['children']:
+            child = '%s/%s.qvnotebook' % (quiver, qv['uuid'])
 
-                            note_meta = {'_id'              : 'note:' + nmf['uuid'],
-                                         'tags'             : these_tags,
-                                         'updatedAt'        : u_at,
-                                         'createdAt'        : c_at,
-                                         'title'            : nmf['title'],
-                                         'bookId'           : 'book:' + nb,
-                                         'numOfTasks'       : 0,
-                                         'numOfCheckedTasks': 0,
-                                         'status'           : 'none',
-                                         'share'            : 'private',
-                                         'doctype'          : 'markdown',
-                                         'body'             : body
-                                         }
-                            db.put(note_meta)
+            if os.path.isdir(child):
+                if os.path.isfile(child + '/meta.json'):
+                    with open(child + '/meta.json') as child_file:
+                        d2 = json.load(child_file)
+                        nb = notebook_update(db, cbooks, d2)
+
+                        note_dirs = os.listdir(child)
+                        for n in note_dirs:
+                            if 'qvnote' in n:
+                                note = {}
+                                ndir = '%s/%s' % (child, n)
+                                body = ''
+
+                                with open(ndir + '/meta.json') as note_meta_file:
+                                    nmf = json.load(note_meta_file)
+                                with open(ndir + '/content.json') as note_content_file:
+                                    ncf = json.load(note_content_file)
+
+                                for x in ncf['cells']:
+                                    body = '%s%s\n\n' % (body, x['data'])
+
+                                (ctags, these_tags) = tag_update(db, ctags, nmf['tags'])
+
+                                # need to convert python timestamps (Quiver) to javascript timestamps (Inkdrop)
+                                u_at = nmf['updated_at'] * 1000
+                                c_at = nmf['created_at'] * 1000
+
+                                note_meta = {'_id'              : 'note:' + nmf['uuid'],
+                                             'tags'             : these_tags,
+                                             'updatedAt'        : u_at,
+                                             'createdAt'        : c_at,
+                                             'title'            : nmf['title'],
+                                             'bookId'           : 'book:' + nb,
+                                             'numOfTasks'       : 0,
+                                             'numOfCheckedTasks': 0,
+                                             'status'           : 'none',
+                                             'share'            : 'private',
+                                             'doctype'          : 'markdown',
+                                             'body'             : body
+                                             }
+                                db.put(note_meta)
+
